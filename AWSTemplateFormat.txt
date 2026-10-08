@@ -1,0 +1,157 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description: Windows Server 2022 EC2 t3.micro with VPC and RDP
+
+Parameters:
+
+  KeyName:
+    Description: EC2 Key Pair
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: aws-key
+
+  InstanceType:
+    Description: EC2 Instance Type
+    Type: String
+    Default: t3.micro
+
+  AllowedRdpIp:
+    Description: IP range allowed for RDP
+    Type: String
+    Default: 0.0.0.0/0
+
+  WindowsAMI:
+    Description: Windows Server 2022 AMI
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-windows-latest/Windows_Server-2022-English-Full-Base
+
+
+Resources:
+
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: Windows-VPC
+
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: Windows-IGW
+
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref MyVPC
+      InternetGatewayId: !Ref InternetGateway
+
+
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: Windows-Public-Subnet
+
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyVPC
+      Tags:
+        - Key: Name
+          Value: Windows-Public-RouteTable
+
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+
+  WindowsSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow RDP access
+      VpcId: !Ref MyVPC
+
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3389
+          ToPort: 3389
+          CidrIp: !Ref AllowedRdpIp
+
+      Tags:
+        - Key: Name
+          Value: Windows-RDP-SG
+
+
+  WindowsEC2:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref WindowsAMI
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      SubnetId: !Ref PublicSubnet
+
+      SecurityGroupIds:
+        - !GetAtt WindowsSecurityGroup.GroupId
+
+      BlockDeviceMappings:
+        - DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+            DeleteOnTermination: true
+            Encrypted: true
+
+      Tags:
+        - Key: Name
+          Value: Windows-Server
+
+
+Outputs:
+
+  VPC:
+    Description: VPC ID
+    Value: !Ref MyVPC
+
+  PublicSubnet:
+    Description: Public Subnet ID
+    Value: !Ref PublicSubnet
+
+  SecurityGroup:
+    Description: Security Group ID
+    Value: !Ref WindowsSecurityGroup
+
+  InstanceId:
+    Description: EC2 Instance ID
+    Value: !Ref WindowsEC2
+
+  PublicIP:
+    Description: Public IP Address
+    Value: !GetAtt WindowsEC2.PublicIp
+
+  RDP:
+    Description: RDP Address
+    Value: !Sub '${WindowsEC2.PublicIp}:3389'
